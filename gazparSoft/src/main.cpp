@@ -1,26 +1,39 @@
+/*
+__   _____ ___ ___        Author: Vincent BESSON
+ \ \ / /_ _| _ ) _ \      Release: 0.52
+  \ V / | || _ \   /      Date: 20240228
+   \_/ |___|___/_|_\      Description: Gazpar Pulse Counter ATMEGA328P with NRF24L01 Module
+                2024      Licence: Creative Commons
+______________________
+
+Revision:
+
+
+*/
+
 #include <Arduino.h>
-
-#ifndef F_CPU						// if F_CPU was not defined in Project -> Properties
-#define F_CPU 8000000UL			// define it now as 8 MHz unsigned long
-#endif
-
-
-#include <avr/sleep.h>
-//#include <util/delay.h>	
-
-#include "Wire.h"
-
-#include <MCP7940.h>  // Include the MCP7940 RTC library
-
+#include <ArduinoLog.h>                         // Logging lib
+#include <avr/sleep.h>                          // Deepsleep lib
+#include "Wire.h"                   
+#include <MCP7940.h>                            // Include the MCP7940 RTC library
 #include <SPI.h>
-#include <RF24.h>     // Include the NRF24L01 Library
-
+#include <RF24.h>                               // Include the NRF24L01 Library
 
 /***************************************************************************************************
 ** Declare all program constants and enumerated types                                             **
 ***************************************************************************************************/
-const uint8_t  SPRINTF_BUFFER_SIZE{32};  ///< Buffer size for sprintf()
-const uint8_t  ALARM1_INTERVAL{15};      ///< Interval seconds for alarm
+
+const uint8_t  SPRINTF_BUFFER_SIZE{32};         //< Buffer size for sprintf()
+
+// ALARM 1 DELAY MGT
+const uint8_t  ALARM1_INTERVAL_HOUR{0};         //< Interval HOUR for alarm
+//const uint8_t  ALARM1_INTERVAL_MIN{30};       //< Interval MIN for alarm
+const uint8_t  ALARM1_INTERVAL_MIN{1};          //< Interval MIN for alarm
+const uint8_t  ALARM1_INTERVAL_SEC{0};          //< Interval SEC for alarm
+
+#define SERIAL_LOG                              // Enable serial logging
+#define DEBUG                                   // DEBUG MODE
+
 /*! ///< Enumeration of MCP7940 alarm types */
 enum alarmTypes {
   matchSeconds,
@@ -33,50 +46,72 @@ enum alarmTypes {
   matchAll,
   Unknown
 };
-MCP7940_Class MCP7940;                          ///< Create instance of the MCP7940M
-char          inputBuffer[SPRINTF_BUFFER_SIZE]; ///< Buffer for sprintf() / sscanf()
+MCP7940_Class MCP7940;                          // < Create instance of the MCP7940M
 
-const int LED_BNK = 7;                          // PD7 LED on pin  10/13
-const int PWR_NRF = 6;                          // PB0 POWER PIN for NRF24L01
-const int NRF_CE=   9;                          // PB1 NRF24L01 CE
-const int NRF_CSN=  10;                          // PB2 NRF24L01 CSN
+char inputBuffer[SPRINTF_BUFFER_SIZE];          // < Buffer for sprintf() / sscanf()
+
+const int ACT_LED   = 5;                          // PD5 Activity LED pin 11 
+const int WAKE_LED  = 7;                          // PD7 Wake up LED on pin 13
+const int PWR_NRF   = 6;                          // PB0 POWER PIN for NRF24L01
+const int NRF_CE    = 9;                          // PB1 NRF24L01 CE
+const int NRF_CSN   = 10;                         // PB2 NRF24L01 CSN
 
 #define BATTERYPIN A0
+#define tunnel  "D6E1A"                         // 5 char Tunnel definition for NRF24
 
-#define tunnel  "PIPE1"
 const byte adresse[6] = tunnel;                 // Mise au format "byte array" du nom du tunnel
-char message[32];                               // Avec cette librairie, on est "limité" à 32 caractères par message
-
+char radioMessage[32];                               // Avec cette librairie, on est "limité" à 32 caractères par message
 
 RF24 radio(NRF_CE, NRF_CSN);                    // Instanciation du NRF24L01
 
-const unsigned long KEEP_RUNNING = 10000;       //milliseconds
-void blink();
+volatile unsigned long gazparCounter =0;        // Pulse counter
+volatile unsigned long measuredvbat  =0;        // vBat
+volatile unsigned long elapse=0;                // counter of RTC wakeup cycle
 
-volatile long gazparCounter=0;
-volatile bool bAlarm=false;
-volatile bool pulse=false;
+volatile bool bAlarm=false;                     // boolean Alarm trigger flag
+volatile bool bPulse=false;                     // boolean Pulse received flag
+
+/***************************************************************************************************
+** HEADER                                                                                         **
+***************************************************************************************************/
+
+void flashActivityLed();
+void blinkWakeUpLed();
 
 void i2cScan();
 void setupAlarm();
-void checkAlarm();
-void counter();
-void sleepNow ();
-void wake();
 
+void wake();
+void counter();
+void sleepNow();
+
+int batteryPercent(int a);
 void startRadio();
 void sendRadio();
 void endRadio();
 
-void startRadio(){
+/***************************************************************************************************
+** FUNCTIONS                                                                                      **
+***************************************************************************************************/
 
+int batteryPercent(int a){
+    a *= 2;                    // we divided by 2, so multiply back
+    a *= 3.3;                  // Multiply by 3.3V, our reference voltage
+    a *= 1000;
+    a /= 1024;                 // convert to voltage
+    return a;
+
+}
+
+void startRadio(){
     pinMode(PWR_NRF, OUTPUT);
     digitalWrite(PWR_NRF, HIGH);
-    delay(1500);
-    radio.begin();                                // Initialisation du module NRF24
-    radio.openWritingPipe(adresse);               // Ouverture du tunnel en ÉCRITURE, avec le "nom" qu'on lui a donné
-    radio.setPALevel(RF24_PA_MIN);                // Sélection d'un niveau "MINIMAL" pour communiquer (pas besoin d'une forte puissance, pour nos essais)
-    radio.stopListening();                        // Arrêt de l'écoute du NRF24 (signifiant qu'on va émettre, et non recevoir, ici)
+    delay(1500);                                    // Wait to init the Power on the module (need tweaking)
+    radio.begin();                                  // Initialisation du module NRF24
+    radio.openWritingPipe(adresse);                 // Ouverture du tunnel en ÉCRITURE, avec le "nom" qu'on lui a donné
+    radio.setPALevel(RF24_PA_HIGH);
+    radio.setAutoAck(true);                         // Important <!>              
+    radio.stopListening();                          // Arrêt de l'écoute du NRF24 (signifiant qu'on va émettre, et non recevoir, ici)
 }
 
 void endRadio(){
@@ -84,69 +119,128 @@ void endRadio(){
 }
 
 void sendRadio() {
-  radio.write(&message, sizeof(message));     // Envoi de notre message
-  delay(500);                                // … toutes les secondes !
+    radio.write(&radioMessage, sizeof(radioMessage));         // Radio Message sent
+    delay(500);                                     
 }
 
-void setupAlarm(){
+void setupAlarm(){                                                                          // 
     
     while (!MCP7940.begin()){
-        Serial.println(F("Unable to find MCP7940. Checking again in 3s."));
+        Log.warning("Unable to find MCP7940. Checking again in 3s." CR );
         delay(3000);
-    }  // of loop until device is located
-    
-    Serial.println(F("MCP7940 initialized."));
+    }
+
+    Log.notice("MCP7940 initialized." CR);
     while (!MCP7940.deviceStatus()) {
-        Serial.println(F("Oscillator is off, turning it on."));
+        Log.notice("Oscillator is off, turning it on." CR);
         bool deviceStatus = MCP7940.deviceStart();  // Start oscillator and return state
         if (!deviceStatus){
-            Serial.println(F("Oscillator did not start, trying again."));
+            Log.notice("Oscillator did not start, trying again." CR);
             delay(1000);
-        }  // of if-then oscillator didn't start
-    }    // of while the oscillator is of
+        }  
+    }
   
-    Serial.println("Setting MCP7940M to date/time of library compile");
-    MCP7940.adjust();  // Use compile date/time to set clock
+    Log.notice("Setting MCP7940M to date/time of library compile" CR);
+    MCP7940.adjust();                                                       // Use compile date/time to set clock
 
-    Serial.print("Date/Time set to ");
+    DateTime now = MCP7940.now();                                           // get the current time
 
-    DateTime now = MCP7940.now();  // get the current time
+    sprintf(inputBuffer, "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(),now.hour(), now.minute(), now.second());
+    Log.notice("Date/Time set: %s" CR ,inputBuffer);
 
-    Serial.println("Setting MFP to true");
-    if (MCP7940.setMFP(true)) 
-        Serial.println("Successfully set MFP to true");
+    Log.notice("Setting MFP to true" CR);
+    if (MCP7940.setMFP(true))                                               // set MFP true
+        Log.notice("Successfully set MFP to true" CR);
     else 
-        Serial.println("Unable to set MFP pin.");
+        Log.notice("Unable to set MFP pin." CR);
 
-    int mfpStatus=MCP7940.getMFP();
-    Serial.print("MFP Status:");
-    Serial.println(mfpStatus);
+    int mfpStatus=MCP7940.getMFP();                                        // gettting the status
+    
+    Log.notice("MFP Status: %d" CR,mfpStatus);
 
-
-
-  // Use sprintf() to pretty print date/time with leading zeroes
+    // Setting initial Alarm 1
+    now = now + TimeSpan(0, ALARM1_INTERVAL_HOUR, ALARM1_INTERVAL_MIN, ALARM1_INTERVAL_SEC);
     sprintf(inputBuffer, "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(),now.hour(), now.minute(), now.second());
+    Log.notice("Setting alarm 1 at: %s " CR,inputBuffer);
+    MCP7940.setAlarm(1, matchAll, now , true);
+
+}
+
+void flashActivityLed(){                                                    // flashing the activity LED
+    digitalWrite(ACT_LED, HIGH);
+    _delay_ms(100);		
+    digitalWrite(ACT_LED, LOW);
+    _delay_ms(100);
+
+}
+
+void blinkWakeUpLed(){                                                      // 10x blinking Wake up LED 
+    for (int i=0; i<10; i++) {  
+        digitalWrite(WAKE_LED, HIGH);
+        _delay_ms(100);		
+        digitalWrite(WAKE_LED, LOW);
+        _delay_ms(100);	
+    }
+
+}
+
+void wake (){
+    sleep_disable ();                                                       // first thing after waking from sleep
+    detachInterrupt (0);
+    bAlarm=true;
+
+}
+
+void counter(){                                                             // Pulse counter function
+    noInterrupts();
+    gazparCounter++;
+    bPulse=true;
+    interrupts();
+
+}
+
+void sleepNow (){
+    Log.notice("Zzzzzzz...." CR );
+
+    delay(100);
+    set_sleep_mode (SLEEP_MODE_PWR_DOWN);   
+    noInterrupts ();                            // make sure we don't get interrupted before we sleep
+    sleep_enable ();                            // enables the sleep bit in the mcucr register
+    //EIFR = bit (INTF0);                       // clear flag for interrupt 0
+    attachInterrupt (0, wake, FALLING);         // wake up on rising edge
     
-    Serial.println(inputBuffer);
-    Serial.println("Setting alarm 0 for every minute at 0 seconds.");
-    now = now + TimeSpan(0, 0, 0, ALARM1_INTERVAL);
-    //MCP7940.setAlarm(0, matchSeconds, now - TimeSpan(0, 0, 0, now.second()),true);  // Match once a minute at 0 seconds
-    MCP7940.setAlarm(0, matchSeconds, now ,true);  // Match every 15 sec
+    interrupts ();                              // interrupts allowed now, next instruction WILL be executed
+    sleep_cpu ();                               // here the device is put to sleep
     
-    Serial.print("Setting alarm 1 to go off at ");
-    //now = now + TimeSpan(0, 0, 0, ALARM1_INTERVAL);  // Add interval to current time
-    
-    sprintf(inputBuffer, "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(),now.hour(), now.minute(), now.second());
-    Serial.println(inputBuffer);
-    now = now + TimeSpan(0, 0, 0, ALARM1_INTERVAL);  // Add interval to current time
-        
-    MCP7940.setAlarm(1, matchSeconds, now , true);  // Set alarm to go off then
-    
-    
+}
+
+void i2cScan(){
+    byte error, address;
+    int nDevices;
+ 
+    Log.notice("i2cScan(): Scanning..." CR );
+    nDevices = 0;
+    for(address = 8; address < 127; address++ ){
+        Wire.beginTransmission(address);
+        error = Wire.endTransmission();
+
+        if (error == 0){
+            Log.notice("i2cScan(): device found at address 0x%X" CR,address ); 
+            nDevices++;
+        }
+    }
+
+    if (nDevices == 0)
+        Log.notice("i2cScan(): no devices found" CR );
+    else
+        Log.notice("i2cScan(): done" CR );
+ 
+    delay(5000);
 
 }
 
 void setup(void){
+
     //to minimize power consumption while sleeping, output pins must not source
     //or sink any current. input pins must have a defined level; a good way to
     //ensure this is to enable the internal pullup resistors.
@@ -154,216 +248,72 @@ void setup(void){
     // for (byte i=0; i<20; i++) {    //make all pins inputs with pullups enabled
     //    pinMode(i, INPUT_PULLUP);
     // }
+
     Serial.begin(9600);
-    Wire.begin(); 
+    while(!Serial && !Serial.available()){}
 
-    pinMode(LED_BNK, OUTPUT); 
-    
-    blink();         //make the led pin an output
-    //digitalWrite(LED_BNK, LOW);        //drive it low so it doesn't source current
-    i2cScan();
-    setupAlarm();
-    attachInterrupt (1, counter, RISING);
+    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+    Log.setShowLevel(false);                                                        // Do not show loglevel, we will do this in the prefix
+
+    pinMode(WAKE_LED, OUTPUT);
+    pinMode(ACT_LED, OUTPUT);
+
+    blinkWakeUpLed();                                                               //Blink at startup
+   
+    Wire.begin();                                                                   // I2C bus startup 
+    i2cScan();                                                                      // scan the I2C bus 
+    setupAlarm();                                                                   // setup the initial alarm & the RTC module
+    attachInterrupt (1, counter, RISING);                                           // attached pulse counter interrupt on 
     attachInterrupt (0, wake, FALLING);
-    //i2cScan();
 
-   // noInterrupts ();          // make sure we don't get interrupted before we sleep
-           // enables the sleep bit in the mcucr register
-    //EIFR = bit (INTF0);       // clear flag for interrupt 0
-   // attachInterrupt (0, inter, FALLING);  // wake up on rising edge
-   // interrupts ();           // interr
-   //sleepNow();
 }
-
-
-void blink(){
-
-    for (int i=0; i<10; i++) {  
-        digitalWrite(LED_BNK, HIGH);
-        _delay_ms(100);		
-        digitalWrite(LED_BNK, LOW);
-        _delay_ms(100);	
-    }
-}
-
-void wake (){
-  sleep_disable ();         // first thing after waking from sleep
-  detachInterrupt (0);
-  bAlarm=true;
-
-   // sleepNow ();
-}  // end of wake
-
-void counter(){
-    noInterrupts();
-    gazparCounter++;
-    pulse=true;
-    interrupts();
-}
-
-void sleepNow (){
-
-  Serial.println("Zzzzzz...");
-  delay(100);
-  set_sleep_mode (SLEEP_MODE_PWR_DOWN);   
-  noInterrupts ();          // make sure we don't get interrupted before we sleep
-  sleep_enable ();          // enables the sleep bit in the mcucr register
-  //EIFR = bit (INTF0);       // clear flag for interrupt 0
-  attachInterrupt (0, wake, FALLING);  // wake up on rising edge
-  
-  interrupts ();           // interrupts allowed now, next instruction WILL be executed
-  sleep_cpu ();            // here the device is put to sleep
-  
-}  // end of sleepNow
-
-
-void i2cScan(){
-    byte error, address;
-    int nDevices;
- 
-    Serial.println("Scanning...");
- 
-    nDevices = 0;
-    for(address = 8; address < 127; address++ ){
-        Wire.beginTransmission(address);
-        error = Wire.endTransmission();
- 
-        if (error == 0){
-            Serial.print("I2C device found at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.print(address,HEX);
-            Serial.println(" !");
- 
-            nDevices++;
-        }
-        /*else if (error == 4) {
-            Serial.print("Unknow error at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.println(address,HEX);
-        }*/
-    }
-    if (nDevices == 0)
-        Serial.println("No I2C devices found\n");
-    else
-        Serial.println("done\n");
- 
-    delay(5000);
-}
-
-void checkAlarm(){
-    static uint8_t secs;
-    DateTime       now = MCP7940.now();  // get the current time
-    if (secs != now.second())            // Output if seconds have changed
-    {
-        sprintf(inputBuffer, "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(),now.hour(), now.minute(), now.second());
-        Serial.print(inputBuffer);
-        secs = now.second();     // Set the counter for later comparision
-        
-        if (MCP7940.isAlarm(0)){
-            Serial.print(" *Alarm0*");
-            delay(1000);
-            blink();
-            MCP7940.clearAlarm(0);
-        }                        // of if Alarm 0 has been triggered
-        
-        if (MCP7940.isAlarm(1))  // When alarm 0 is triggered
-        {
-            
-            
-            delay(1000);
-            blink();
-            MCP7940.clearAlarm(1);
-
-            Serial.print(" *Alarm1* resetting to go off next at ");
-            now = now + TimeSpan(0, 0, 0, ALARM1_INTERVAL);  // Add interval to current time
-            sprintf(inputBuffer, "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(),now.hour(), now.minute(), now.second());
-            Serial.print(inputBuffer);
-
-            MCP7940.setAlarm(1, matchAll, now, true);  // Set alarm to go off in 10s again
-        }                                            // of if Alarm 0 has been triggered
-        Serial.println();
-    }  // of if the seconds have changed
-}  // of method checkAlarm()
 
 void loop(void){
-    Serial.println("looping");
-
-    //delay(1000);                                      // Uncomment to see the pulse with the oscilloscope
+    Log.notice("looping" CR);
+    //delay(1000);                                                                  // Uncomment to see the pulse with the oscilloscope
 
     if (bAlarm==true){
-
+        elapse++;
         bAlarm=false;
-        delay(100);
-        Serial.println("cought...");
-        Serial.print("garparCounter=");
-        Serial.println(gazparCounter);
-        
-        int a = analogRead(BATTERYPIN);   delay(10); // discard first reading
-        a = analogRead(BATTERYPIN);
-    
-        sprintf(message,"vbat=%d",a);
-        Serial.println(message);
-        
-        blink();
 
-        Serial.println("init radio");
-        startRadio();
-        sprintf(message,"counter=%ld",gazparCounter);
-        
-        Serial.println("send radio message");
+        delay(100);
+        blinkWakeUpLed();                                                           // Blink Wakeup led
+
+        Log.notice("Radio start" CR);
+        startRadio();                                                               // start Radio module NRFL01
+
+        measuredvbat = analogRead(BATTERYPIN); delay(10);                           // discard first reading
+        measuredvbat = analogRead(BATTERYPIN);                                      // keep second reading
+        measuredvbat = batteryPercent(measuredvbat);                                // Convert to battery percent
+
+        sprintf(radioMessage,"d:%lu;v:%lu;p:%lu;",elapse,measuredvbat,gazparCounter);   // <!> Warning Radio Message can not exceed 32 char, after 32 it is discarded
+        Log.notice("Radio message sent: %s" CR,radioMessage);
         sendRadio();
         
-        Serial.println(" end radio message");
+        Log.notice("Radio end" CR);
         endRadio();
 
-        DateTime       now = MCP7940.now();
-        now = now + TimeSpan(0, 0, 0, ALARM1_INTERVAL);
-        //MCP7940.setAlarm(0, matchSeconds, now - TimeSpan(0, 0, 0, now.second()),true);  // Match once a minute at 0 seconds
-        MCP7940.setAlarm(0, matchSeconds, now ,true);               // resetting the alarm clears the alarm
-        
+        // Setting next Alarm
+        DateTime now = MCP7940.now();
+        now = now + TimeSpan(0, ALARM1_INTERVAL_HOUR, ALARM1_INTERVAL_MIN, ALARM1_INTERVAL_SEC);
+        sprintf(inputBuffer, "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(),now.hour(), now.minute(), now.second());
+        Log.notice("Setting alarm 1 at: %s " CR,inputBuffer);
+        MCP7940.setAlarm(1, matchAll, now , true);
     }
-    if (pulse==true){
-        sprintf(message,"counter=%ld",gazparCounter);
-        Serial.println(message);
-        int a = analogRead(BATTERYPIN);   delay(10); // discard first reading
+
+    if (bPulse==true){
+        flashActivityLed();
+#ifdef DEBUG
+        Log.notice("counter=%ld" CR,gazparCounter);
+        int a = analogRead(BATTERYPIN);   
+        delay(10); // discard first reading
         a = analogRead(BATTERYPIN);
-    
-        sprintf(message,"vbat=%d",a);
-        Serial.println(message);
-        pulse=false;
-        
+        a=batteryPercent(a);
+        Log.notice("vbat=%d" CR,a);
+#endif
+        bPulse=false; 
     }
+
     sleepNow();
 
 }
-
-void goToSleep(void)
-{
-    byte adcsra = ADCSRA;          //save the ADC Control and Status Register A
-    ADCSRA = 0;                    //disable the ADC
-    EICRA = _BV(ISC01);            //configure INT0 to trigger on falling edge
-    EIMSK = _BV(INT0);             //enable INT0
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-    cli();                         //stop interrupts to ensure the BOD timed sequence executes as required
-    sleep_enable();
-    //disable brown-out detection while sleeping (20-25µA)
-    uint8_t mcucr1 = MCUCR | _BV(BODS) | _BV(BODSE);
-    uint8_t mcucr2 = mcucr1 & ~_BV(BODSE);
-    MCUCR = mcucr1;
-    MCUCR = mcucr2;
-    //sleep_bod_disable();           //for AVR-GCC 4.3.3 and later, this is equivalent to the previous 4 lines of code
-    sei();                         //ensure interrupts enabled so we can wake up again
-    sleep_cpu();                   //go to sleep
-    sleep_disable();               //wake up here
-    ADCSRA = adcsra;               //restore ADCSRA
-}
-
-//external interrupt 0 wakes the MCU
-//ISR(INT1_vect)
-//{
-//++gazparCounter;
-   // Serial.println("External Interrupt");
-//EIMSK = 0;                     //disable external interrupts (only need one to wake up)
-//  }

@@ -1,11 +1,14 @@
 # Gazpar Counter Interface
 
- Gazpar lowpower atmega328P counter
+<img src="https://raw.githubusercontent.com/vibr77/GazparInterface/3475be8582863561bc4a3687bae8be7bfb4c3068/doc/IMG_5614%20Large.jpeg" width=240>
 
 
-to generate the bom python3 ../../../99.\ Tools/InteractiveHtmlBom/InteractiveHtmlBom/generate_interactive_bom.py PCB_ATMEGA328_GAZPAR_rev1.0b.json
+
 
 This project aims to provide a solution to gather Gazpar (France cgaz counter) device pulse and send them over Radio (NRF24L01 module) to an arduino device. 
+
+It can be used as well to count water sensor as well.
+
 
 ## Structure of the project : 
 - gazparCard: EasyEDA hardward schematics & GERBER

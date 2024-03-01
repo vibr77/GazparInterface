@@ -71,6 +71,8 @@ volatile unsigned long elapse=0;                // counter of RTC wakeup cycle
 volatile bool bAlarm=false;                     // boolean Alarm trigger flag
 volatile bool bPulse=false;                     // boolean Pulse received flag
 
+#define disk1 0x50    //Address of eeprom chip
+
 /***************************************************************************************************
 ** HEADER                                                                                         **
 ***************************************************************************************************/
@@ -93,6 +95,40 @@ void endRadio();
 /***************************************************************************************************
 ** FUNCTIONS                                                                                      **
 ***************************************************************************************************/
+
+
+void writeEEPROM(int deviceaddress, unsigned int eeaddress, byte data ){
+
+  const uint8_t i2c_base_address = 0x50;
+  const uint8_t upper_three_eeprom_adress_bits = (eeaddress >> 8) & 0x7;
+  const uint8_t i2c_address = i2c_base_address | upper_three_eeprom_adress_bits;
+  Wire.beginTransmission(i2c_address);
+  Wire.write(eeaddress & 0xFF); // address LSB
+
+  Wire.write(data);
+  Wire.endTransmission();
+
+  delay(5);
+}
+
+byte readEEPROM(int deviceaddress, unsigned int eeaddress ){
+  byte rdata = 0xFF;
+
+  const uint8_t i2c_base_address = 0x50;
+  const uint8_t upper_three_eeprom_adress_bits = (eeaddress >> 8) & 0x7;
+  const uint8_t i2c_address = i2c_base_address | upper_three_eeprom_adress_bits;
+  Wire.beginTransmission(i2c_address);
+  Wire.write(eeaddress & 0xFF); // address LSB
+  
+  Wire.endTransmission();
+
+  Wire.requestFrom(deviceaddress, 1);
+
+  if (Wire.available()) rdata = Wire.read();
+
+  return rdata;
+}
+
 
 int batteryPercent(int a){
     Log.notice("vbat=%d" CR,a);
@@ -269,7 +305,9 @@ void setup(void){
 
     analogReference(INTERNAL);                                                      // for ADC reading INTERNAL 1.1v will be used 
                                                                                     // <!> AREF should not be connected otherwise short is made in ATMEGA
-    
+    unsigned int address0 = 0;
+    writeEEPROM(disk1, address0, 1);
+    Serial.println(readEEPROM(disk1, address0), DEC);
 }
 
 void loop(void){

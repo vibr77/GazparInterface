@@ -95,11 +95,11 @@ void endRadio();
 ***************************************************************************************************/
 
 int batteryPercent(int a){
-    a *= 2;                    // we divided by 2, so multiply back
-    a *= 3.3;                  // Multiply by 3.3V, our reference voltage
-    a *= 1000;
-    a /= 1024;                 // convert to voltage
-    return a;
+    Log.notice("vbat=%d" CR,a);
+    int max =1023;
+    int floor=750;
+    int percent=100-((max-a)*100)/(max-floor);
+    return percent;
 
 }
 
@@ -248,9 +248,10 @@ void setup(void){
     // for (byte i=0; i<20; i++) {    //make all pins inputs with pullups enabled
     //    pinMode(i, INPUT_PULLUP);
     // }
+    //
 
     Serial.begin(9600);
-    while(!Serial && !Serial.available()){}
+    //while(!Serial && !Serial.available()){}
 
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     Log.setShowLevel(false);                                                        // Do not show loglevel, we will do this in the prefix
@@ -266,11 +267,14 @@ void setup(void){
     attachInterrupt (1, counter, RISING);                                           // attached pulse counter interrupt on 
     attachInterrupt (0, wake, FALLING);
 
+    analogReference(INTERNAL);                                                      // for ADC reading INTERNAL 1.1v will be used 
+                                                                                    // <!> AREF should not be connected otherwise short is made in ATMEGA
+    
 }
 
 void loop(void){
     Log.notice("looping" CR);
-    //delay(1000);                                                                  // Uncomment to see the pulse with the oscilloscope
+  
 
     if (bAlarm==true){
         elapse++;
@@ -279,14 +283,13 @@ void loop(void){
         delay(100);
         blinkWakeUpLed();                                                           // Blink Wakeup led
 
-        Log.notice("Radio start" CR);
-        startRadio();                                                               // start Radio module NRFL01
-
-        measuredvbat = analogRead(BATTERYPIN); delay(10);                           // discard first reading
+        measuredvbat = analogRead(BATTERYPIN); delay(100);                          // discard first reading
         measuredvbat = analogRead(BATTERYPIN);                                      // keep second reading
         measuredvbat = batteryPercent(measuredvbat);                                // Convert to battery percent
-
-        sprintf(radioMessage,"d:%lu;v:%lu;p:%lu;",elapse,measuredvbat,gazparCounter);   // <!> Warning Radio Message can not exceed 32 char, after 32 it is discarded
+        
+        Log.notice("Radio start" CR);
+        startRadio();                                                               // start Radio module NRFL01
+        sprintf(radioMessage,"d:%lu;v:%d;p:%lu;",elapse,measuredvbat,gazparCounter);   // <!> Warning Radio Message can not exceed 32 char, after 32 it is discarded
         Log.notice("Radio message sent: %s" CR,radioMessage);
         sendRadio();
         
@@ -304,9 +307,9 @@ void loop(void){
     if (bPulse==true){
         flashActivityLed();
 #ifdef DEBUG
-        Log.notice("counter=%ld" CR,gazparCounter);
+        Log.notice("counter=%l" CR,gazparCounter);
         int a = analogRead(BATTERYPIN);   
-        delay(10); // discard first reading
+        delay(100); // discard first reading
         a = analogRead(BATTERYPIN);
         a=batteryPercent(a);
         Log.notice("vbat=%d" CR,a);

@@ -7,7 +7,7 @@ __   _____ ___ ___        Author: Vincent BESSON
 ______________________
 
 Revision:
-
++ 20240301 add EEPROM Mgt
 
 */
 
@@ -18,6 +18,9 @@ Revision:
 #include <MCP7940.h>                            // Include the MCP7940 RTC library
 #include <SPI.h>
 #include <RF24.h>                               // Include the NRF24L01 Library
+#include "extEEPROM.h"                          //https://github.com/PaoloP74/extEEPROM
+
+extEEPROM myEEPROM(kbits_16, 1, 16, 0x50);
 
 /***************************************************************************************************
 ** Declare all program constants and enumerated types                                             **
@@ -33,6 +36,8 @@ const uint8_t  ALARM1_INTERVAL_SEC{0};          //< Interval SEC for alarm
 
 #define SERIAL_LOG                              // Enable serial logging
 #define DEBUG                                   // DEBUG MODE
+
+//JC_EEPROM eep(JC_EEPROM::kbits_16, 1, 16,0x50); // device size, number of devices, page size
 
 /*! ///< Enumeration of MCP7940 alarm types */
 enum alarmTypes {
@@ -97,37 +102,7 @@ void endRadio();
 ***************************************************************************************************/
 
 
-void writeEEPROM(int deviceaddress, unsigned int eeaddress, byte data ){
 
-  const uint8_t i2c_base_address = 0x50;
-  const uint8_t upper_three_eeprom_adress_bits = (eeaddress >> 8) & 0x7;
-  const uint8_t i2c_address = i2c_base_address | upper_three_eeprom_adress_bits;
-  Wire.beginTransmission(i2c_address);
-  Wire.write(eeaddress & 0xFF); // address LSB
-
-  Wire.write(data);
-  Wire.endTransmission();
-
-  delay(5);
-}
-
-byte readEEPROM(int deviceaddress, unsigned int eeaddress ){
-  byte rdata = 0xFF;
-
-  const uint8_t i2c_base_address = 0x50;
-  const uint8_t upper_three_eeprom_adress_bits = (eeaddress >> 8) & 0x7;
-  const uint8_t i2c_address = i2c_base_address | upper_three_eeprom_adress_bits;
-  Wire.beginTransmission(i2c_address);
-  Wire.write(eeaddress & 0xFF); // address LSB
-  
-  Wire.endTransmission();
-
-  Wire.requestFrom(deviceaddress, 1);
-
-  if (Wire.available()) rdata = Wire.read();
-
-  return rdata;
-}
 
 
 int batteryPercent(int a){
@@ -305,9 +280,18 @@ void setup(void){
 
     analogReference(INTERNAL);                                                      // for ADC reading INTERNAL 1.1v will be used 
                                                                                     // <!> AREF should not be connected otherwise short is made in ATMEGA
-    unsigned int address0 = 0;
-    writeEEPROM(disk1, address0, 1);
-    Serial.println(readEEPROM(disk1, address0), DEC);
+    byte i2cStat = myEEPROM.begin(extEEPROM::twiClock400kHz);
+    if ( i2cStat != 0 ) {
+        //there was a problem
+    }
+   i2cStat = myEEPROM.write(314, 16);
+    delay(50);
+
+    // Let's make a single read
+    int readValue = myEEPROM.read(42);
+    delay(50);
+    Log.notice("reading value from the eeprom at position 42: %d" CR,readValue);
+
 }
 
 void loop(void){

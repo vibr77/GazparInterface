@@ -18,7 +18,8 @@ Revision:
 #include <MCP7940.h>                            // Include the MCP7940 RTC library
 #include <SPI.h>
 #include <RF24.h>                               // Include the NRF24L01 Library
-#include "extEEPROM.h"                          //https://github.com/PaoloP74/extEEPROM
+
+#include <extEEPROM.h>                          //https://github.com/PaoloP74/extEEPROM
 
 extEEPROM myEEPROM(kbits_16, 1, 16, 0x50);
 
@@ -81,6 +82,9 @@ volatile bool bPulse=false;                     // boolean Pulse received flag
 /***************************************************************************************************
 ** HEADER                                                                                         **
 ***************************************************************************************************/
+
+void writeLongEeprom(int addr,long value);
+long readLongEeprom(int addr);
 
 void flashActivityLed();
 void blinkWakeUpLed();
@@ -284,14 +288,43 @@ void setup(void){
     if ( i2cStat != 0 ) {
         //there was a problem
     }
-   i2cStat = myEEPROM.write(314, 16);
+   i2cStat = myEEPROM.write(42, 16);
     delay(50);
 
     // Let's make a single read
     int readValue = myEEPROM.read(42);
     delay(50);
     Log.notice("reading value from the eeprom at position 42: %d" CR,readValue);
+    //char * str1=(char *)malloc(32*sizeof(char));
+    char str1[32];
+    sprintf(str1,"Wahoo this rock");
+    
+    i2cStat = myEEPROM.write(10,(byte*)str1,32);
+    delay(50);
+    //char * str2=(char *)malloc(32*sizeof(char));
+    char str2[32];
+    i2cStat = myEEPROM.read(10,(byte *)str2,32);
+    Log.notice("Res:%s"CR, str2);
 
+   writeLongEeprom(10,6789860);
+
+   long a=readLongEeprom(10);
+
+ Log.notice("Res:%l"CR, a);
+}
+
+void writeLongEeprom(int addr,long value){
+    char str[16];
+    sprintf(str,"%ld",value);
+    byte i2cStat = myEEPROM.write(addr,(byte *)str,16);
+    return;
+}
+
+long readLongEeprom(int addr){
+    char str[16];
+    byte i2cStat = myEEPROM.read(addr,(byte *)str,16);
+    long ret=atol(str);
+    return ret;
 }
 
 void loop(void){

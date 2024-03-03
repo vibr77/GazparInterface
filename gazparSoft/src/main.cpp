@@ -9,7 +9,15 @@ ______________________
 Revision:
 + 20240301 add EEPROM Mgt
 
+
+// EEPROM Memory location 
+
+10 = Counter long       size    16
+
 */
+
+
+
 
 #include <Arduino.h>
 #include <ArduinoLog.h>                         // Logging lib
@@ -31,8 +39,8 @@ const uint8_t  SPRINTF_BUFFER_SIZE{32};         //< Buffer size for sprintf()
 
 // ALARM 1 DELAY MGT
 const uint8_t  ALARM1_INTERVAL_HOUR{0};         //< Interval HOUR for alarm
-//const uint8_t  ALARM1_INTERVAL_MIN{30};       //< Interval MIN for alarm
-const uint8_t  ALARM1_INTERVAL_MIN{1};          //< Interval MIN for alarm
+const uint8_t  ALARM1_INTERVAL_MIN{30};       //< Interval MIN for alarm
+//const uint8_t  ALARM1_INTERVAL_MIN{1};          //< Interval MIN for alarm
 const uint8_t  ALARM1_INTERVAL_SEC{0};          //< Interval SEC for alarm
 
 #define SERIAL_LOG                              // Enable serial logging
@@ -106,7 +114,19 @@ void endRadio();
 ***************************************************************************************************/
 
 
+void writeLongEeprom(int addr,long value){
+    char str[16];
+    sprintf(str,"%ld",value);
+    byte i2cStat = myEEPROM.write(addr,(byte *)str,16);
+    return;
+}
 
+long readLongEeprom(int addr){
+    char str[16];
+    byte i2cStat = myEEPROM.read(addr,(byte *)str,16);
+    long ret=atol(str);
+    return ret;
+}
 
 
 int batteryPercent(int a){
@@ -253,6 +273,9 @@ void i2cScan(){
     delay(5000);
 
 }
+        
+        
+
 
 void setup(void){
 
@@ -284,47 +307,38 @@ void setup(void){
 
     analogReference(INTERNAL);                                                      // for ADC reading INTERNAL 1.1v will be used 
                                                                                     // <!> AREF should not be connected otherwise short is made in ATMEGA
-    byte i2cStat = myEEPROM.begin(extEEPROM::twiClock400kHz);
+    
+    byte i2cStat = myEEPROM.begin();                                                // Initialize the EEPROM
     if ( i2cStat != 0 ) {
-        //there was a problem
+        Log.error("EEPROM is not ready");
     }
-   i2cStat = myEEPROM.write(42, 16);
-    delay(50);
+    gazparCounter=readLongEeprom(10);                                               // Read EEPROM at location 10
+    Log.notice("EEPROM read gazparCounter=%l" CR,gazparCounter);
+    
+    //gazparCounter=0;                                                                // Reinit
+    
+    //i2cStat = myEEPROM.write(42, 16);
+    //delay(50);
 
     // Let's make a single read
-    int readValue = myEEPROM.read(42);
-    delay(50);
-    Log.notice("reading value from the eeprom at position 42: %d" CR,readValue);
+    //int readValue = myEEPROM.read(42);
+    //delay(50);
+    //Log.notice("reading value from the eeprom at position 42: %d" CR,readValue);
     //char * str1=(char *)malloc(32*sizeof(char));
-    char str1[32];
-    sprintf(str1,"Wahoo this rock");
+    //char str1[32];
+    //sprintf(str1,"Wahoo this rock");
     
-    i2cStat = myEEPROM.write(10,(byte*)str1,32);
-    delay(50);
+    //i2cStat = myEEPROM.write(10,(byte*)str1,32);
+    //delay(50);
     //char * str2=(char *)malloc(32*sizeof(char));
-    char str2[32];
-    i2cStat = myEEPROM.read(10,(byte *)str2,32);
-    Log.notice("Res:%s"CR, str2);
+    //char str2[32];
+    //i2cStat = myEEPROM.read(10,(byte *)str2,32);
+    //Log.notice("Res:%s"CR, str2);
+    //writeLongEeprom(10,6789860);
 
-   writeLongEeprom(10,6789860);
-
-   long a=readLongEeprom(10);
-
- Log.notice("Res:%l"CR, a);
-}
-
-void writeLongEeprom(int addr,long value){
-    char str[16];
-    sprintf(str,"%ld",value);
-    byte i2cStat = myEEPROM.write(addr,(byte *)str,16);
-    return;
-}
-
-long readLongEeprom(int addr){
-    char str[16];
-    byte i2cStat = myEEPROM.read(addr,(byte *)str,16);
-    long ret=atol(str);
-    return ret;
+                                     
+    //Log.notice("Res:%l"CR, a);
+    bAlarm=true;
 }
 
 void loop(void){
@@ -341,6 +355,9 @@ void loop(void){
         measuredvbat = analogRead(BATTERYPIN); delay(100);                          // discard first reading
         measuredvbat = analogRead(BATTERYPIN);                                      // keep second reading
         measuredvbat = batteryPercent(measuredvbat);                                // Convert to battery percent
+
+        Log.notice("write EEPROM current counter");
+        writeLongEeprom(10,gazparCounter);
         
         Log.notice("Radio start" CR);
         startRadio();                                                               // start Radio module NRFL01

@@ -31,6 +31,12 @@ Revision:
 
 extEEPROM myEEPROM(kbits_16, 1, 16, 0x50);
 
+
+/* <!> DEBUG TESTING MODE */
+
+#define DEBUG
+
+
 /***************************************************************************************************
 ** Declare all program constants and enumerated types                                             **
 ***************************************************************************************************/
@@ -39,14 +45,18 @@ const uint8_t  SPRINTF_BUFFER_SIZE{32};         //< Buffer size for sprintf()
 
 // ALARM 1 DELAY MGT
 const uint8_t  ALARM1_INTERVAL_HOUR{0};         //< Interval HOUR for alarm
+
+
+#ifdef DEBUG
+const uint8_t  ALARM1_INTERVAL_MIN{1};          //< Interval MIN for alarm
+#elif
 const uint8_t  ALARM1_INTERVAL_MIN{30};       //< Interval MIN for alarm
-//const uint8_t  ALARM1_INTERVAL_MIN{1};          //< Interval MIN for alarm
+#endif
+
 const uint8_t  ALARM1_INTERVAL_SEC{0};          //< Interval SEC for alarm
 
 #define SERIAL_LOG                              // Enable serial logging
-#define DEBUG                                   // DEBUG MODE
-
-//JC_EEPROM eep(JC_EEPROM::kbits_16, 1, 16,0x50); // device size, number of devices, page size
+                                 // DEBUG MODE
 
 /*! ///< Enumeration of MCP7940 alarm types */
 enum alarmTypes {
@@ -60,32 +70,33 @@ enum alarmTypes {
   matchAll,
   Unknown
 };
-MCP7940_Class MCP7940;                          // < Create instance of the MCP7940M
+MCP7940_Class MCP7940;                              // < Create instance of the MCP7940M
 
-char inputBuffer[SPRINTF_BUFFER_SIZE];          // < Buffer for sprintf() / sscanf()
+char inputBuffer[SPRINTF_BUFFER_SIZE];              // < Buffer for sprintf() / sscanf()
 
-const int ACT_LED   = 5;                          // PD5 Activity LED pin 11 
-const int WAKE_LED  = 7;                          // PD7 Wake up LED on pin 13
-const int PWR_NRF   = 6;                          // PB0 POWER PIN for NRF24L01
-const int NRF_CE    = 9;                          // PB1 NRF24L01 CE
-const int NRF_CSN   = 10;                         // PB2 NRF24L01 CSN
+const int ACT_LED   = 5;                            // PD5 Activity LED pin 11 
+const int WAKE_LED  = 7;                            // PD7 Wake up LED on pin 13
+const int PWR_NRF   = 6;                            // PB0 POWER PIN for NRF24L01
+const int NRF_CE    = 9;                            // PB1 NRF24L01 CE
+const int NRF_CSN   = 10;                           // PB2 NRF24L01 CSN
 
 #define BATTERYPIN A0
-#define tunnel  "D6E1A"                         // 5 char Tunnel definition for NRF24
+//#define tunnel  "D6E1A"                           // PROD 5 char Tunnel definition for NRF24
+#define tunnel  "PIPE1"                             // TEST Tunnel
 
-const byte adresse[6] = tunnel;                 // Mise au format "byte array" du nom du tunnel
+const byte adresse[6] = tunnel;                     // Mise au format "byte array" du nom du tunnel
 char radioMessage[32];                               // Avec cette librairie, on est "limité" à 32 caractères par message
 
-RF24 radio(NRF_CE, NRF_CSN);                    // Instanciation du NRF24L01
+RF24 radio(NRF_CE, NRF_CSN);                        // Instanciation du NRF24L01
 
-volatile unsigned long gazparCounter =0;        // Pulse counter
-volatile unsigned long measuredvbat  =0;        // vBat
-volatile unsigned long elapse=0;                // counter of RTC wakeup cycle
+volatile unsigned long gazparCounter =0;            // Pulse counter
+volatile unsigned long measuredvbat  =0;            // vBat
+volatile unsigned long elapse=0;                    // counter of RTC wakeup cycle
 
-volatile bool bAlarm=false;                     // boolean Alarm trigger flag
-volatile bool bPulse=false;                     // boolean Pulse received flag
+volatile bool bAlarm=false;                         // boolean Alarm trigger flag
+volatile bool bPulse=false;                         // boolean Pulse received flag
 
-#define disk1 0x50    //Address of eeprom chip
+#define disk1 0x50                                  //Address of eeprom chip
 
 /***************************************************************************************************
 ** HEADER                                                                                         **
@@ -274,8 +285,6 @@ void i2cScan(){
 
 }
         
-        
-
 
 void setup(void){
 
@@ -283,14 +292,12 @@ void setup(void){
     //or sink any current. input pins must have a defined level; a good way to
     //ensure this is to enable the internal pullup resistors.
 
-    // for (byte i=0; i<20; i++) {    //make all pins inputs with pullups enabled
-    //    pinMode(i, INPUT_PULLUP);
-    // }
-    //
+    for (byte i=0; i<20; i++) {    //make all pins inputs with pullups enabled
+        pinMode(i, INPUT_PULLUP);
+    }
 
     Serial.begin(9600);
-    //while(!Serial && !Serial.available()){}
-
+    
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     Log.setShowLevel(false);                                                        // Do not show loglevel, we will do this in the prefix
 
@@ -307,7 +314,6 @@ void setup(void){
 
     analogReference(INTERNAL);                                                      // for ADC reading INTERNAL 1.1v will be used 
                                                                                     // <!> AREF should not be connected otherwise short is made in ATMEGA
-    
     byte i2cStat = myEEPROM.begin();                                                // Initialize the EEPROM
     if ( i2cStat != 0 ) {
         Log.error("EEPROM is not ready");
@@ -344,7 +350,6 @@ void setup(void){
 void loop(void){
     Log.notice("looping" CR);
   
-
     if (bAlarm==true){
         elapse++;
         bAlarm=false;

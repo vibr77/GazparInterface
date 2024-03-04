@@ -1,13 +1,18 @@
 /*
 __   _____ ___ ___        Author: Vincent BESSON
- \ \ / /_ _| _ ) _ \      Release: 0.52
+ \ \ / /_ _| _ ) _ \      Release: 0.51
   \ V / | || _ \   /      Date: 20240228
    \_/ |___|___/_|_\      Description: Gazpar Pulse Counter ATMEGA328P with NRF24L01 Module
                 2024      Licence: Creative Commons
 ______________________
 
 Revision:
+
++ 20240302  Fix poor unsigned long conversion
+            Add debug mode
+            add debug log in setup()
 + 20240301 add EEPROM Mgt
+
 
 
 // EEPROM Memory location 
@@ -15,8 +20,6 @@ Revision:
 10 = Counter long       size    16
 
 */
-
-
 
 
 #include <Arduino.h>
@@ -34,7 +37,7 @@ extEEPROM myEEPROM(kbits_16, 1, 16, 0x50);
 
 /* <!> DEBUG TESTING MODE */
 
-#define DEBUG
+//#define DEBUG
 
 
 /***************************************************************************************************
@@ -49,7 +52,7 @@ const uint8_t  ALARM1_INTERVAL_HOUR{0};         //< Interval HOUR for alarm
 
 #ifdef DEBUG
 const uint8_t  ALARM1_INTERVAL_MIN{1};          //< Interval MIN for alarm
-#elif
+#else
 const uint8_t  ALARM1_INTERVAL_MIN{30};       //< Interval MIN for alarm
 #endif
 
@@ -81,8 +84,12 @@ const int NRF_CE    = 9;                            // PB1 NRF24L01 CE
 const int NRF_CSN   = 10;                           // PB2 NRF24L01 CSN
 
 #define BATTERYPIN A0
-//#define tunnel  "D6E1A"                           // PROD 5 char Tunnel definition for NRF24
-#define tunnel  "PIPE1"                             // TEST Tunnel
+#ifdef DEBUG
+#define tunnel  "PIPE1" 
+#else
+#define tunnel  "D6E1A"                           // PROD 5 char Tunnel definition for NRF24
+#endif
+//                            // TEST Tunnel
 
 const byte adresse[6] = tunnel;                     // Mise au format "byte array" du nom du tunnel
 char radioMessage[32];                               // Avec cette librairie, on est "limité" à 32 caractères par message
@@ -90,8 +97,8 @@ char radioMessage[32];                               // Avec cette librairie, on
 RF24 radio(NRF_CE, NRF_CSN);                        // Instanciation du NRF24L01
 
 volatile unsigned long gazparCounter =0;            // Pulse counter
-volatile unsigned long measuredvbat  =0;            // vBat
-volatile unsigned long elapse=0;                    // counter of RTC wakeup cycle
+volatile int measuredvbat  =0;            // vBat
+volatile int elapse=0;                    // counter of RTC wakeup cycle
 
 volatile bool bAlarm=false;                         // boolean Alarm trigger flag
 volatile bool bPulse=false;                         // boolean Pulse received flag
@@ -303,11 +310,16 @@ void setup(void){
 
     pinMode(WAKE_LED, OUTPUT);
     pinMode(ACT_LED, OUTPUT);
+    
+    digitalWrite(ACT_LED, LOW);
 
     blinkWakeUpLed();                                                               //Blink at startup
    
-    Wire.begin();                                                                   // I2C bus startup 
-    i2cScan();                                                                      // scan the I2C bus 
+    Wire.begin();                                                                   // Initialize I2C bus
+
+#ifdef DEBUG                                                                      
+    i2cScan();                                                                      // scan the I2C bus
+#endif                                                                               
     setupAlarm();                                                                   // setup the initial alarm & the RTC module
     attachInterrupt (1, counter, RISING);                                           // attached pulse counter interrupt on 
     attachInterrupt (0, wake, FALLING);
@@ -316,10 +328,19 @@ void setup(void){
                                                                                     // <!> AREF should not be connected otherwise short is made in ATMEGA
     byte i2cStat = myEEPROM.begin();                                                // Initialize the EEPROM
     if ( i2cStat != 0 ) {
-        Log.error("EEPROM is not ready");
+        Log.error("setup(): EEPROM is not ready");
     }
+
+#ifdef DEBUG
+    Log.notice("setup(): mode is DEBUG" CR);
+#else
+    Log.notice("setup(): mode is PRODUCTION" CR);
+#endif
+    Log.notice("setup(): radio tunnel:%s" CR,tunnel);
+    Log.notice("setup(): message period:%d min" CR,ALARM1_INTERVAL_MIN);
+
     gazparCounter=readLongEeprom(10);                                               // Read EEPROM at location 10
-    Log.notice("EEPROM read gazparCounter=%l" CR,gazparCounter);
+    Log.notice("setup(): EEPROM read gazparCounter=%l" CR,gazparCounter);
     
     //gazparCounter=0;                                                                // Reinit
     
@@ -361,35 +382,35 @@ void loop(void){
         measuredvbat = analogRead(BATTERYPIN);                                      // keep second reading
         measuredvbat = batteryPercent(measuredvbat);                                // Convert to battery percent
 
-        Log.notice("write EEPROM current counter");
+        Log.notice("loop(): write EEPROM current counter");
         writeLongEeprom(10,gazparCounter);
         
-        Log.notice("Radio start" CR);
+        Log.notice("loop(): Radio start" CR);
         startRadio();                                                               // start Radio module NRFL01
-        sprintf(radioMessage,"d:%lu;v:%d;p:%lu;",elapse,measuredvbat,gazparCounter);   // <!> Warning Radio Message can not exceed 32 char, after 32 it is discarded
-        Log.notice("Radio message sent: %s" CR,radioMessage);
+        sprintf(radioMessage,"d:%d;v:%d;p:%lu;",elapse,measuredvbat,gazparCounter);   // <!> Warning Radio Message can not exceed 32 char, after 32 it is discarded
+        Log.notice("loop(): Radio message sent: %s" CR,radioMessage);
         sendRadio();
         
-        Log.notice("Radio end" CR);
+        Log.notice("loop(): Radio end" CR);
         endRadio();
 
         // Setting next Alarm
         DateTime now = MCP7940.now();
         now = now + TimeSpan(0, ALARM1_INTERVAL_HOUR, ALARM1_INTERVAL_MIN, ALARM1_INTERVAL_SEC);
         sprintf(inputBuffer, "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(),now.hour(), now.minute(), now.second());
-        Log.notice("Setting alarm 1 at: %s " CR,inputBuffer);
+        Log.notice("loop(): Setting alarm 1 at: %s " CR,inputBuffer);
         MCP7940.setAlarm(1, matchAll, now , true);
     }
 
     if (bPulse==true){
         flashActivityLed();
 #ifdef DEBUG
-        Log.notice("counter=%l" CR,gazparCounter);
+        Log.notice("loop(): counter=%l" CR,gazparCounter);
         int a = analogRead(BATTERYPIN);   
         delay(100); // discard first reading
         a = analogRead(BATTERYPIN);
         a=batteryPercent(a);
-        Log.notice("vbat=%d" CR,a);
+        Log.notice("loop(): vbat=%d" CR,a);
 #endif
         bPulse=false; 
     }
